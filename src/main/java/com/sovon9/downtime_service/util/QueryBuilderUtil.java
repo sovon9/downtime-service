@@ -1,6 +1,7 @@
 package com.sovon9.downtime_service.util;
 
 import com.sovon9.downtime_service.entities.DowntimeEvent;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -21,34 +22,30 @@ public class QueryBuilderUtil {
             String field = entry.getKey();
             Object value = entry.getValue();
 
-            // Handle nested objects in sorting (e.g. status: {activityStatusDesc: "ASC"})
-            if(value instanceof Map) {
+            // Handle nested objects in sorting (e.g. reason: {reasonCode: "ASC"})
+            if (value instanceof Map) {
                 Map<String, Object> nestedOrder = (Map<String, Object>) value;
-                for(Map.Entry<String, Object> nestedEntry : nestedOrder.entrySet()) {
-                     String nestedField = field + "." + nestedEntry.getKey();
-                     String directionStr = String.valueOf(nestedEntry.getValue());
+                for (Map.Entry<String, Object> nestedEntry : nestedOrder.entrySet()) {
+                    String nestedField = field + "." + nestedEntry.getKey();
+                    String directionStr = String.valueOf(nestedEntry.getValue());
 
-                     // When backward pagination is requested, defaultDirection is DESC.
-                     // We need to invert the user's requested sort to fetch from the end.
-                     Sort.Direction direction;
-                     if (defaultDirection == Sort.Direction.DESC) {
-                         direction = "DESC".equalsIgnoreCase(directionStr) ? Sort.Direction.ASC : Sort.Direction.DESC;
-                     } else {
-                         direction = "DESC".equalsIgnoreCase(directionStr) ? Sort.Direction.DESC : Sort.Direction.ASC;
-                     }
-                     orders.add(new Sort.Order(direction, nestedField));
+                    Sort.Direction direction;
+                    if (defaultDirection == Sort.Direction.DESC) {
+                        direction = "DESC".equalsIgnoreCase(directionStr) ? Sort.Direction.ASC : Sort.Direction.DESC;
+                    } else {
+                        direction = "DESC".equalsIgnoreCase(directionStr) ? Sort.Direction.DESC : Sort.Direction.ASC;
+                    }
+                    orders.add(new Sort.Order(direction, nestedField));
                 }
             } else {
                 String directionStr = String.valueOf(value);
 
-                // Inverse logic for backward pagination
                 Sort.Direction direction;
                 if (defaultDirection == Sort.Direction.DESC) {
                     direction = "DESC".equalsIgnoreCase(directionStr) ? Sort.Direction.ASC : Sort.Direction.DESC;
                 } else {
                     direction = "DESC".equalsIgnoreCase(directionStr) ? Sort.Direction.DESC : Sort.Direction.ASC;
                 }
-
                 orders.add(new Sort.Order(direction, field));
             }
         }
@@ -58,7 +55,7 @@ public class QueryBuilderUtil {
 
     public static Specification<DowntimeEvent> buildSpecification(Map<String, Object> filter) {
         if (filter == null || filter.isEmpty()) {
-            return null; // Return null when no filter is provided
+            return null;
         }
 
         return (root, query, criteriaBuilder) -> {
@@ -73,7 +70,11 @@ public class QueryBuilderUtil {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Predicate> buildPredicates(Map<String, Object> filter, jakarta.persistence.criteria.Root<DowntimeEvent> root, jakarta.persistence.criteria.CriteriaBuilder cb) {
+    private static List<Predicate> buildPredicates(
+            Map<String, Object> filter,
+            jakarta.persistence.criteria.Root<DowntimeEvent> root,
+            jakarta.persistence.criteria.CriteriaBuilder cb) {
+
         List<Predicate> predicates = new ArrayList<>();
 
         for (Map.Entry<String, Object> entry : filter.entrySet()) {
@@ -93,6 +94,7 @@ public class QueryBuilderUtil {
                 if (!andPredicates.isEmpty()) {
                     predicates.add(cb.and(andPredicates.toArray(new Predicate[0])));
                 }
+
             } else if (key.equals("or")) {
                 List<Map<String, Object>> orList = (List<Map<String, Object>>) value;
                 List<Predicate> orPredicates = new ArrayList<>();
@@ -105,8 +107,8 @@ public class QueryBuilderUtil {
                 if (!orPredicates.isEmpty()) {
                     predicates.add(cb.or(orPredicates.toArray(new Predicate[0])));
                 }
-            }
-            else if (key.equals("id") || key.equals("downtimeId")) {
+
+            } else if (key.equals("id") || key.equals("downtimeId")) {
                 try {
                     Long parsedId = Long.parseLong(value.toString());
                     predicates.add(cb.equal(root.get("downtimeId"), parsedId));
@@ -117,22 +119,51 @@ public class QueryBuilderUtil {
                             predicates.add(cb.equal(root.get("downtimeId"), Long.parseLong(globalId[1])));
                         }
                     } catch (Exception ex) {
-                        // ignore
+                        // ignore invalid global IDs
                     }
                 }
-            }
-            else if (value instanceof Map) {
-                // Handle nested objects like status: { activityStatusDesc: "OPEN" }
+
+            } else if (value instanceof Map) {
+                // Nested filter — supports two levels deep:
+                //
+                //   Level 1:  reason: { reasonCode: "BOTTLE_JAM" }
+                //             → LEFT JOIN downtime_reason ON ... WHERE reason_code = 'BOTTLE_JAM'
+                //
+                //   Level 2:  reason: { category: { categoryName: "Mechanical" } }
+                //             → LEFT JOIN downtime_reason ON ...
+                //               LEFT JOIN downtime_category ON ... WHERE category_name = 'Mechanical'
+                //
+                // Using LEFT JOIN keeps DowntimeEvents with NULL reason_id in results
+                // when filtering on other simple fields at the same time.
                 Map<String, Object> nestedMap = (Map<String, Object>) value;
+                jakarta.persistence.criteria.Join<?, ?> firstJoin = root.join(key, JoinType.LEFT);
+
                 for (Map.Entry<String, Object> nestedEntry : nestedMap.entrySet()) {
-                    String nestedKey = nestedEntry.getKey();
+                    String nestedKey   = nestedEntry.getKey();
                     Object nestedValue = nestedEntry.getValue();
-                    if(nestedValue != null) {
-                       predicates.add(cb.equal(root.join(key).get(nestedKey), nestedValue));
+
+                    if (nestedValue == null) {
+                        continue;
+                    }
+
+                    if (nestedValue instanceof Map) {
+                        // Level 2: e.g. category: { categoryName: "Mechanical" }
+                        Map<String, Object> deepMap = (Map<String, Object>) nestedValue;
+                        jakarta.persistence.criteria.Join<?, ?> secondJoin = firstJoin.join(nestedKey, JoinType.LEFT);
+
+                        for (Map.Entry<String, Object> deepEntry : deepMap.entrySet()) {
+                            if (deepEntry.getValue() != null) {
+                                predicates.add(cb.equal(secondJoin.get(deepEntry.getKey()), deepEntry.getValue()));
+                            }
+                        }
+                    } else {
+                        // Level 1: e.g. reasonCode: "BOTTLE_JAM"
+                        predicates.add(cb.equal(firstJoin.get(nestedKey), nestedValue));
                     }
                 }
+
             } else {
-                // Handle all other simple fields automatically (title, createdAt, productionUnitId, etc.)
+                // Simple field: isPlanned, productionUnitId, processOrderId, comments, etc.
                 predicates.add(cb.equal(root.get(key), value));
             }
         }
