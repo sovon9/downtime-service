@@ -1,0 +1,43 @@
+directive @lookup on FIELD_DEFINITION
+directive @internal on FIELD_DEFINITION
+directive @sharable on INTERFACE | OBJECT | FIELD_DEFINITION
+
+type Query
+{
+    downtime(where: downtimeEventFilter, first: Int, last: Int, before: String, after: String, order: downtimeEventOrder): DowntimeEventConnection
+}
+
+type PageInfo
+{
+    endCursor: String
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    startCursor: String
+}
+
+input downtimeEventFilter
+{
+
+}
+
+input downtimeEventOrder
+{
+
+}
+
+type DowntimeEventConnection
+{
+    edges: [DwontimeEventEdge]
+    pageinfo: PageInfo!
+}
+
+type DwontimeEventEdge
+{
+    node: DowntimeEvent
+    cursor: String!
+}
+
+type DowntimeEvent
+{
+
+}
