@@ -4,7 +4,9 @@ directive @sharable on INTERFACE | OBJECT | FIELD_DEFINITION
 
 type Query
 {
-    downtime(where: downtimeEventFilter, first: Int, last: Int, before: String, after: String, order: downtimeEventOrder): DowntimeEventConnection
+    downtimeEvents(where: DowntimeEventFilter, first: Int, last: Int, before: String, after: String, order: DowntimeEventOrder): DowntimeEventConnection
+
+    downtimeEventsById(downtimeId: [Float!]): [DowntimeEvent] @lookup @internal
 }
 
 type PageInfo
@@ -15,29 +17,118 @@ type PageInfo
     startCursor: String
 }
 
-input downtimeEventFilter
-{
-
-}
-
-input downtimeEventOrder
-{
-
-}
-
 type DowntimeEventConnection
 {
-    edges: [DwontimeEventEdge]
-    pageinfo: PageInfo!
+    edges: [DowntimeEventEdge]
+    pageInfo: PageInfo!
 }
 
-type DwontimeEventEdge
+type DowntimeEventEdge
 {
     node: DowntimeEvent
     cursor: String!
 }
 
-type DowntimeEvent
+type DowntimeEvent implements Node @sharable
 {
+    id: ID!
+    downtimeId: ID
+    productionUnitId: Float
+    productionUnit: ProductionUnit @lookup
+    processOrderId: Float
+    processOrder: ProcessOrder @lookup
+    startTime: String!
+    endTime: String
+    durationMinutes: Float
+    downtimeReasonId: Int
+    reason: DowntimeReason
+    isPlanned: Boolean
+    comments: String
+    createdAt: String
+}
 
+type DowntimeReason
+{
+    downtimeReasonId: ID
+    reasonCode: String
+    reasonDescription: String
+    categoryId: Int
+    category: DowntimeCategory
+}
+
+type DowntimeCategory
+{
+    categoryId: ID
+    categoryName: String
+    isPlanned: Boolean
+}
+
+input DowntimeEventFilter
+{
+    and: [DowntimeEventFilter]
+    or: [DowntimeEventFilter]
+    downtimeId: ID
+    productionUnitId: Float
+    processOrderId: Float
+    startTime: String
+    endTime: String
+    isPlanned: Boolean
+    downtimeReasonId: Int
+    reason: DowntimeReasonFilter
+}
+
+input DowntimeReasonFilter
+{
+    downtimeReasonId: ID
+    reasonCode: String
+    reasonDescription: String
+    categoryId: Int
+    category: DowntimeCategoryFilter
+}
+
+input DowntimeCategoryFilter
+{
+    categoryId: ID
+    categoryName: String
+    isPlanned: Boolean
+}
+
+input DowntimeEventOrder
+{
+    downtimeId: SortOrder
+    productionUnitId: SortOrder
+    startTime: SortOrder
+    endTime: SortOrder
+    durationMinutes: SortOrder
+    isPlanned: SortOrder
+    reason: DowntimeReasonOrder
+}
+
+input DowntimeReasonOrder
+{
+    downtimeReasonId: SortOrder
+    reasonCode: SortOrder
+    reasonDescription: SortOrder
+}
+
+enum SortOrder
+{
+    ASC
+    DESC
+}
+
+interface Node @sharable
+{
+    id: ID!
+}
+
+# Cross-service stubs resolved via federation
+type ProductionUnit
+{
+    productionUnitId: Float
+}
+
+type ProcessOrder
+{
+    processOrderId: Float
 }
